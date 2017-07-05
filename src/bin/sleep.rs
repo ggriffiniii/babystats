@@ -1,26 +1,26 @@
 extern crate babystats;
 extern crate chrono;
 
-use babystats::{BabyManagerData,Event};
+use babystats::{BabyManagerData,Event,SleepEvent};
 use std::collections::BTreeMap;
 use std::io;
 use std::process;
 use std::error::Error;
-use chrono::offset::Local;
 
 fn run() -> Result<(), Box<Error>> {
     let mut rdr = BabyManagerData::from_reader(io::stdin());
-    let mut events_by_date: BTreeMap<chrono::Date<Local>, Vec<Event>> = BTreeMap::new();
-    for event in &mut rdr.into_iter().map(|r| r.unwrap()) {
-        events_by_date.entry(event.time().date()).or_insert(Vec::new()).push(event.clone());
+    let sleep_events = &mut rdr.into_iter().filter_map(|e| {
+        match e {
+            Ok(Event::Sleep(se @ SleepEvent{end: Some(_), ..})) => Some(se),
+            _ => None,
+        }
+    });
+    let mut sleeps_by_date: BTreeMap<_, _> = BTreeMap::new();
+    for event in sleep_events {
+        sleeps_by_date.entry(event.end.unwrap().date()).or_insert(Vec::new()).push(event.clone());
     }
-    let max_sleep_by_date: Vec<_> = events_by_date.into_iter().map(|(_, v)| {
-        v.into_iter().filter_map(|r| {
-            match r {
-                Event::Sleep(sr) => Some(sr),
-                _ => None,
-            }
-        }).fold(None, |acc, r| {
+    let max_sleep_by_date: Vec<_> = sleeps_by_date.into_iter().map(|(_, v)| {
+        v.into_iter().fold(None, |acc, r| {
             match acc {
                 None => Some(r),
                 Some(a) => if a.duration > r.duration {
@@ -31,8 +31,13 @@ fn run() -> Result<(), Box<Error>> {
             }
         })
     }).filter_map(|v| v).collect();
-    for sr in max_sleep_by_date {
-        println!("{:?}: {}", sr.start.date(), duration_str(sr.duration))
+    for sr in max_sleep_by_date.windows(5) {
+        let (count, sum) = sr.iter().fold((0,0), |(c,s), sr| {
+            (c + 1, s + sr.duration.num_milliseconds())
+        });
+        let mean = (sum as f64 / count as f64) as i64;
+        let date = sr.iter().last().unwrap().end.unwrap().date();
+        println!("{}: {}", date, duration_str(chrono::Duration::milliseconds(mean)))
     }
     Ok(())
 }
