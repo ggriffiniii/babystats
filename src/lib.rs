@@ -7,16 +7,14 @@ extern crate serde;
 extern crate chrono;
 extern crate regex;
 
-use std::collections::BTreeMap;
+use chrono::TimeZone;
 use std::error::Error;
 use std::io;
-use std::process;
 use chrono::offset::{Local,Utc};
-use chrono::TimeZone;
 use regex::Regex;
 
 #[derive(Debug,Deserialize)]
-struct RawRecord {
+struct RawEvent {
     #[serde(rename = "Type")]
 	typ: String,
     #[serde(rename = "Start")]
@@ -33,24 +31,24 @@ struct RawRecord {
 	note: String,
 }
 
-impl RawRecord {
-    fn into_record(self) -> Result<Record, Box<Error>> {
+impl RawEvent {
+    fn into_event(self) -> Result<Event, Box<Error>> {
         match self.typ.as_str() {
-            "Sleep" => Ok(Record::Sleep(self.to_sleep_record()?)),
-            "Diaper" => Ok(Record::Diaper(self.to_diaper_record()?)),
-            "Bottle feeding" => Ok(Record::Feeding(FeedingRecord::Bottle(self.to_bottle_record()?))),
-            "Left breast" => Ok(Record::Feeding(FeedingRecord::LeftBreast(self.to_breast_record()?))),
-            "Right breast" => Ok(Record::Feeding(FeedingRecord::RightBreast(self.to_breast_record()?))),
-            "Pumping" => Ok(Record::Pumping(self.to_pumping_record()?)),
-            "Vaccination" => Ok(Record::TummyTime(self.to_tummy_time_record()?)),
-            "Measure" => Ok(Record::Measure(self.to_measure_record()?)),
-            "Note" => Ok(Record::Note(self.to_note_record()?)),
+            "Sleep" => Ok(Event::Sleep(self.to_sleep_event()?)),
+            "Diaper" => Ok(Event::Diaper(self.to_diaper_event()?)),
+            "Bottle feeding" => Ok(Event::Feeding(FeedingEvent::Bottle(self.to_bottle_event()?))),
+            "Left breast" => Ok(Event::Feeding(FeedingEvent::LeftBreast(self.to_breast_event()?))),
+            "Right breast" => Ok(Event::Feeding(FeedingEvent::RightBreast(self.to_breast_event()?))),
+            "Pumping" => Ok(Event::Pumping(self.to_pumping_event()?)),
+            "Vaccination" => Ok(Event::TummyTime(self.to_tummy_time_event()?)),
+            "Measure" => Ok(Event::Measure(self.to_measure_event()?)),
+            "Note" => Ok(Event::Note(self.to_note_event()?)),
             _ => Err(From::from(format!("unknown type: {}", self.typ))),
         }
     }
 
-    fn to_sleep_record(&self) -> Result<SleepRecord, Box<Error>> {
-        Ok(SleepRecord{
+    fn to_sleep_event(&self) -> Result<SleepEvent, Box<Error>> {
+        Ok(SleepEvent{
             start: datetime_from_str(&self.start)?,
             end:
                 if self.end.len() == 0 {
@@ -63,8 +61,8 @@ impl RawRecord {
         })
     }
 
-    fn to_diaper_record(&self) -> Result<DiaperRecord, Box<Error>> {
-        Ok(DiaperRecord{
+    fn to_diaper_event(&self) -> Result<DiaperEvent, Box<Error>> {
+        Ok(DiaperEvent{
             time: datetime_from_str(&self.start)?,
             pee: self.extra.contains("Urine"),
             poo: self.extra.contains("Feces"),
@@ -72,8 +70,8 @@ impl RawRecord {
         })
     }
 
-    fn to_bottle_record(&self) -> Result<BottleRecord, Box<Error>> {
-        Ok(BottleRecord{
+    fn to_bottle_event(&self) -> Result<BottleEvent, Box<Error>> {
+        Ok(BottleEvent{
             time: datetime_from_str(&self.start)?,
             milk: match self.extra2.as_str() {
                 "Mom's milk" => Milk::BreastMilk,
@@ -91,8 +89,8 @@ impl RawRecord {
         })
     }
 
-    fn to_breast_record(&self) -> Result<BreastRecord, Box<Error>> {
-        Ok(BreastRecord{
+    fn to_breast_event(&self) -> Result<BreastEvent, Box<Error>> {
+        Ok(BreastEvent{
             start: datetime_from_str(&self.start)?,
             end:
                 if self.end.len() == 0 {
@@ -105,8 +103,8 @@ impl RawRecord {
         })
     }
 
-    fn to_pumping_record(&self) -> Result<PumpingRecord, Box<Error>> {
-        Ok(PumpingRecord{
+    fn to_pumping_event(&self) -> Result<PumpingEvent, Box<Error>> {
+        Ok(PumpingEvent{
             start: datetime_from_str(&self.start)?,
             ounces: {
                 if self.extra.ends_with(" oz") {
@@ -119,8 +117,8 @@ impl RawRecord {
         })
     }
 
-    fn to_tummy_time_record(&self) -> Result<TummyTimeRecord, Box<Error>> {
-        Ok(TummyTimeRecord{
+    fn to_tummy_time_event(&self) -> Result<TummyTimeEvent, Box<Error>> {
+        Ok(TummyTimeEvent{
             start: datetime_from_str(&self.start)?,
             end:
                 if self.end.len() == 0 {
@@ -133,7 +131,7 @@ impl RawRecord {
         })
     }
 
-    fn to_measure_record(&self) -> Result<MeasureRecord, Box<Error>> {
+    fn to_measure_event(&self) -> Result<MeasureEvent, Box<Error>> {
         lazy_static! {
             static ref WEIGHT_RE: Regex = Regex::new(r"Weight: (\d+(?:\.\d+)?) lb").unwrap();
             static ref HEIGHT_RE: Regex = Regex::new(r"Height: (\d+(?:\.\d+)?) in").unwrap();
@@ -154,7 +152,7 @@ impl RawRecord {
             and_then(|x| {
                 x.get(1).unwrap().as_str().parse::<f32>().ok()
             });
-        Ok(MeasureRecord{
+        Ok(MeasureEvent{
             time: datetime_from_str(&self.start)?,
             weight: weight,
             height: height,
@@ -163,8 +161,8 @@ impl RawRecord {
         })
     }
 
-    fn to_note_record(&self) -> Result<NoteRecord, Box<Error>> {
-        Ok(NoteRecord{
+    fn to_note_event(&self) -> Result<NoteEvent, Box<Error>> {
+        Ok(NoteEvent{
             time: datetime_from_str(&self.start)?,
             note: self.note.clone(),
         })
@@ -186,122 +184,122 @@ fn datetime_from_str<T: AsRef<str>>(s: T) -> Result<chrono::DateTime<Local>, Box
 }
 
 #[derive(Debug,Clone)]
-enum Record {
-    Sleep(SleepRecord),
-    Diaper(DiaperRecord),
-    Feeding(FeedingRecord),
-    Pumping(PumpingRecord),
-    TummyTime(TummyTimeRecord),
-    Measure(MeasureRecord),
-    Note(NoteRecord),
+pub enum Event {
+    Sleep(SleepEvent),
+    Diaper(DiaperEvent),
+    Feeding(FeedingEvent),
+    Pumping(PumpingEvent),
+    TummyTime(TummyTimeEvent),
+    Measure(MeasureEvent),
+    Note(NoteEvent),
 }
 
-impl Record {
-    fn time(&self) -> chrono::DateTime<Local> {
+impl Event {
+    pub fn time(&self) -> chrono::DateTime<Local> {
         match self {
-            &Record::Sleep(ref r) => r.start,
-            &Record::Diaper(ref r) => r.time,
-            &Record::Feeding(ref r) => r.time(),
-            &Record::Pumping(ref r) => r.start,
-            &Record::TummyTime(ref r) => r.start,
-            &Record::Measure(ref r) => r.time,
-            &Record::Note(ref r) => r.time,
+            &Event::Sleep(ref r) => r.start,
+            &Event::Diaper(ref r) => r.time,
+            &Event::Feeding(ref r) => r.time(),
+            &Event::Pumping(ref r) => r.start,
+            &Event::TummyTime(ref r) => r.start,
+            &Event::Measure(ref r) => r.time,
+            &Event::Note(ref r) => r.time,
         }
     }
 }
 
 #[derive(Debug,Clone)]
-struct SleepRecord {
-    start: chrono::DateTime<Local>,
-    end: Option<chrono::DateTime<Local>>,
-    duration: chrono::Duration,
-    note: String,
+pub struct SleepEvent {
+    pub start: chrono::DateTime<Local>,
+    pub end: Option<chrono::DateTime<Local>>,
+    pub duration: chrono::Duration,
+    pub note: String,
 }
 
 #[derive(Debug,Clone)]
-struct DiaperRecord {
-    time: chrono::DateTime<Local>,
-    pee: bool,
-    poo: bool,
-    note: String,
+pub struct DiaperEvent {
+    pub time: chrono::DateTime<Local>,
+    pub pee: bool,
+    pub poo: bool,
+    pub note: String,
 }
 
 #[derive(Debug,Clone)]
-enum FeedingRecord {
-    Bottle(BottleRecord),
-    LeftBreast(BreastRecord),
-    RightBreast(BreastRecord),
+pub enum FeedingEvent {
+    Bottle(BottleEvent),
+    LeftBreast(BreastEvent),
+    RightBreast(BreastEvent),
 }
 
-impl FeedingRecord {
-    fn time(&self) -> chrono::DateTime<Local> {
+impl FeedingEvent {
+    pub fn time(&self) -> chrono::DateTime<Local> {
         match self {
-            &FeedingRecord::Bottle(ref r) => r.time,
-            &FeedingRecord::LeftBreast(ref r) => r.start,
-            &FeedingRecord::RightBreast(ref r) => r.start,
+            &FeedingEvent::Bottle(ref r) => r.time,
+            &FeedingEvent::LeftBreast(ref r) => r.start,
+            &FeedingEvent::RightBreast(ref r) => r.start,
         }
     }
 }
 
 #[derive(Debug,Clone)]
-enum Milk {
+pub enum Milk {
     BreastMilk,
     Formula,
     Unknown,
 }
 
 #[derive(Debug,Clone)]
-struct BottleRecord {
-    time: chrono::DateTime<Local>,
-    milk: Milk,
-    ounces: f32,
-    note: String,
+pub struct BottleEvent {
+    pub time: chrono::DateTime<Local>,
+    pub milk: Milk,
+    pub ounces: f32,
+    pub note: String,
 }
 
 #[derive(Debug,Clone)]
-struct BreastRecord {
-    start: chrono::DateTime<Local>,
-    end: Option<chrono::DateTime<Local>>,
-    duration: chrono::Duration,
-    note: String,
+pub struct BreastEvent {
+    pub start: chrono::DateTime<Local>,
+    pub end: Option<chrono::DateTime<Local>>,
+    pub duration: chrono::Duration,
+    pub note: String,
 }
 
 #[derive(Debug,Clone)]
-struct PumpingRecord {
-    start: chrono::DateTime<Local>,
-    ounces: f32,
-    note: String,
+pub struct PumpingEvent {
+    pub start: chrono::DateTime<Local>,
+    pub ounces: f32,
+    pub note: String,
 }
 
 #[derive(Debug,Clone)]
-struct TummyTimeRecord {
-    start: chrono::DateTime<Local>,
-    end: Option<chrono::DateTime<Local>>,
-    duration: chrono::Duration,
-    note: String,
+pub struct TummyTimeEvent {
+    pub start: chrono::DateTime<Local>,
+    pub end: Option<chrono::DateTime<Local>>,
+    pub duration: chrono::Duration,
+    pub note: String,
 }
 
 #[derive(Debug,Clone)]
-struct MeasureRecord {
-    time: chrono::DateTime<Local>,
-    weight: Option<f32>,
-    height: Option<f32>,
-    head_circ: Option<f32>,
-    note: String,
+pub struct MeasureEvent {
+    pub time: chrono::DateTime<Local>,
+    pub weight: Option<f32>,
+    pub height: Option<f32>,
+    pub head_circ: Option<f32>,
+    pub note: String,
 }
 
 #[derive(Debug,Clone)]
-struct NoteRecord {
-    time: chrono::DateTime<Local>,
-    note: String,
+pub struct NoteEvent {
+    pub time: chrono::DateTime<Local>,
+    pub note: String,
 }
 
-struct BabyManagerData<R> {
+pub struct BabyManagerData<R> {
     rdr: csv::Reader<R>
 }
 
 impl<R: io::Read> BabyManagerData<R> {
-    fn from_reader(rdr: R) -> BabyManagerData<R> {
+    pub fn from_reader(rdr: R) -> BabyManagerData<R> {
         BabyManagerData{
             rdr: csv::Reader::from_reader(rdr),
         }
@@ -309,69 +307,24 @@ impl<R: io::Read> BabyManagerData<R> {
 }
 
 impl<'a, R : io::Read> IntoIterator for &'a mut BabyManagerData<R> {
-    type Item = Result<Record, Box<Error>>;
+    type Item = Result<Event, Box<Error>>;
     type IntoIter = Iter<'a, R>;
     fn into_iter(self) -> Iter<'a, R> {
-        Iter{iter: self.rdr.deserialize::<RawRecord>()}
+        Iter{iter: self.rdr.deserialize::<RawEvent>()}
     }
 }
 
-struct Iter<'a, R: 'a> {
-    iter: csv::DeserializeRecordsIter<'a, R, RawRecord>
+pub struct Iter<'a, R: 'a> {
+    iter: csv::DeserializeRecordsIter<'a, R, RawEvent>
 }
 
 impl<'a, R : io::Read> Iterator for Iter<'a, R> {
-    type Item = Result<Record, Box<Error>>;
+    type Item = Result<Event, Box<Error>>;
     fn next(&mut self) -> Option<Self::Item> {
         match self.iter.next() {
             None => None,
             Some(Err(e)) => Some(Err(Box::new(e))),
-            Some(Ok(raw_record)) => Some(raw_record.into_record()),
+            Some(Ok(raw_event)) => Some(raw_event.into_event()),
         }
-    }
-}
-
-fn run() -> Result<(), Box<Error>> {
-    let mut rdr = BabyManagerData::from_reader(io::stdin());
-    let mut records_by_date: BTreeMap<chrono::Date<Local>, Vec<Record>> = BTreeMap::new();
-    for record in &mut rdr.into_iter().map(|r| r.unwrap()) {
-        records_by_date.entry(record.time().date()).or_insert(Vec::new()).push(record.clone());
-    }
-    let max_sleep_by_date: Vec<_> = records_by_date.into_iter().map(|(k, v)| {
-        v.into_iter().filter_map(|r| {
-            match r {
-                Record::Sleep(sr) => Some(sr),
-                _ => None,
-            }
-        }).fold(None, |acc, r| {
-            match acc {
-                None => Some(r),
-                Some(a) => if a.duration > r.duration {
-                    Some(a)
-                } else {
-                    Some(r)
-                }
-            }
-        })
-    }).filter_map(|v| v).collect();
-    for sr in max_sleep_by_date {
-        println!("{:?}: {}", sr.start.date(), duration_str(sr.duration))
-    }
-    Ok(())
-}
-
-fn duration_str(mut d: chrono::Duration) -> String {
-    let hours = d.num_hours();
-    d = d - chrono::Duration::hours(hours);
-    let minutes = d.num_minutes();
-    d = d - chrono::Duration::minutes(minutes);
-    let seconds = d.num_seconds();
-    format!("{:02}:{:02}:{:02}", hours, minutes, seconds)
-}
-
-fn main() {
-    if let Err(err) = run() {
-        println!("{}", err);
-        process::exit(1);
     }
 }
