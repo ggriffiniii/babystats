@@ -43,12 +43,6 @@ fn run() -> Result<(), Box<Error>> {
         x.push(format!("{}", date));
         y.push(mean as f64 / 3600000 as f64);
     }
-    let grid = babystats::plotly::Grid{
-        x: x.as_slice(),
-        y: y.as_slice(),
-    };
-    let url = babystats::plotly::create_grid(&grid)?;
-    println!("{}", url);
     Ok(())
 }
 

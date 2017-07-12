@@ -6,40 +6,33 @@ extern crate lazy_static;
 extern crate serde;
 extern crate chrono;
 extern crate regex;
-#[macro_use]
-extern crate serde_json;
-#[macro_use]
-extern crate hyper;
 
 use chrono::TimeZone;
 use std::error::Error;
 use std::io;
+use std::fs::File;
+use std::path::Path;
 use chrono::offset::{Local,Utc};
 use regex::Regex;
 
 const ML_PER_OZ: f32 = 29.574;
 
 #[derive(Debug,Deserialize)]
-struct RawEvent {
+#[serde(rename_all = "PascalCase")]
+struct RawEvent<'a> {
     #[serde(rename = "Type")]
-	typ: String,
-    #[serde(rename = "Start")]
-	start: String,
-    #[serde(rename = "End")]
-	end: String,
-    #[serde(rename = "Duration")]
-	duration: String,
-    #[serde(rename = "Extra")]
-	extra: String,
-    #[serde(rename = "Extra2")]
-	extra2: String,
-    #[serde(rename = "Note")]
-	note: String,
+	typ: &'a str,
+	start: &'a str,
+	end: &'a str,
+	duration: &'a str,
+	extra: &'a str,
+	extra2: &'a str,
+	note: &'a str,
 }
 
-impl RawEvent {
+impl<'a> RawEvent<'a> {
     fn into_event(self) -> Result<Event, Box<Error>> {
-        match self.typ.as_str() {
+        match self.typ {
             "Sleep" => Ok(Event::Sleep(self.to_sleep_event()?)),
             "Diaper" => Ok(Event::Diaper(self.to_diaper_event()?)),
             "Bottle feeding" => Ok(Event::Feeding(FeedingEvent::Bottle(self.to_bottle_event()?))),
@@ -63,7 +56,7 @@ impl RawEvent {
                     Some(datetime_from_str(&self.end)?)
                 },
             duration: self.to_duration()?,
-            note: self.note.clone(),
+            note: self.note.to_string(),
         })
     }
 
@@ -72,14 +65,14 @@ impl RawEvent {
             time: datetime_from_str(&self.start)?,
             pee: self.extra.contains("Urine"),
             poo: self.extra.contains("Feces"),
-            note: self.note.clone(),
+            note: self.note.to_string(),
         })
     }
 
     fn to_bottle_event(&self) -> Result<BottleEvent, Box<Error>> {
         Ok(BottleEvent{
             time: datetime_from_str(&self.start)?,
-            milk: match self.extra2.as_str() {
+            milk: match self.extra2 {
                 "Mom's milk" => Milk::BreastMilk,
                 "Formula" => Milk::Formula,
                 _ => Milk::Unknown,
@@ -91,7 +84,7 @@ impl RawEvent {
                     0.0
                 }
             },
-            note: self.note.clone(),
+            note: self.note.to_string(),
         })
     }
 
@@ -105,7 +98,7 @@ impl RawEvent {
                     Some(datetime_from_str(&self.end)?)
                 },
             duration: self.to_duration()?,
-            note: self.note.clone(),
+            note: self.note.to_string(),
         })
     }
 
@@ -115,12 +108,12 @@ impl RawEvent {
             static ref R_RE: Regex = Regex::new(r"(\d+)\s*R").unwrap();
         }
         let left = L_RE.
-            captures(self.note.as_str()).
+            captures(self.note).
             and_then(|x| {
                 x.get(1).unwrap().as_str().parse::<i32>().ok()
             });
         let right = R_RE.
-            captures(self.note.as_str()).
+            captures(self.note).
             and_then(|x| {
                 x.get(1).unwrap().as_str().parse::<i32>().ok()
             });
@@ -136,7 +129,7 @@ impl RawEvent {
             },
             left_ml: left,
             right_ml: right,
-            note: self.note.clone(),
+            note: self.note.to_string(),
         })
     }
 
@@ -150,7 +143,7 @@ impl RawEvent {
                     Some(datetime_from_str(&self.end)?)
                 },
             duration: self.to_duration()?,
-            note: self.note.clone(),
+            note: self.note.to_string(),
         })
     }
 
@@ -161,17 +154,17 @@ impl RawEvent {
             static ref HEAD_CIRC_RE: Regex = Regex::new(r"Head circumference: (\d+(?:\.\d+)?) in").unwrap();
         }
         let weight = WEIGHT_RE.
-            captures(self.extra.as_str()).
+            captures(self.extra).
             and_then(|x| {
                 x.get(1).unwrap().as_str().parse::<f32>().ok()
             });
         let height = HEIGHT_RE.
-            captures(self.extra.as_str()).
+            captures(self.extra).
             and_then(|x| {
                 x.get(1).unwrap().as_str().parse::<f32>().ok()
             });
         let head_circ = HEAD_CIRC_RE.
-            captures(self.extra.as_str()).
+            captures(self.extra).
             and_then(|x| {
                 x.get(1).unwrap().as_str().parse::<f32>().ok()
             });
@@ -180,14 +173,14 @@ impl RawEvent {
             weight: weight,
             height: height,
             head_circ: head_circ,
-            note: self.note.clone(),
+            note: self.note.to_string(),
         })
     }
 
     fn to_note_event(&self) -> Result<NoteEvent, Box<Error>> {
         Ok(NoteEvent{
             time: datetime_from_str(&self.start)?,
-            note: self.note.clone(),
+            note: self.note.to_string(),
         })
     }
 
@@ -329,6 +322,14 @@ pub struct BabyManagerData<R> {
     rdr: csv::Reader<R>
 }
 
+impl BabyManagerData<File> {
+    pub fn from_path<P: AsRef<Path>>(path: P) -> Result<BabyManagerData<File>, Box<Error>> {
+        Ok(BabyManagerData{
+            rdr: csv::Reader::from_path(path)?,
+        })
+    }
+}
+
 impl<R: io::Read> BabyManagerData<R> {
     pub fn from_reader(rdr: R) -> BabyManagerData<R> {
         BabyManagerData{
@@ -341,98 +342,51 @@ impl<'a, R : io::Read> IntoIterator for &'a mut BabyManagerData<R> {
     type Item = Result<Event, Box<Error>>;
     type IntoIter = Iter<'a, R>;
     fn into_iter(self) -> Iter<'a, R> {
-        Iter{iter: self.rdr.deserialize::<RawEvent>()}
+        let state = match self.rdr.headers() {
+            Err(e) => IterState::HeadersFailed(e.into()),
+            Ok(hdrs) => IterState::HeadersParsed(hdrs.clone()),
+        };
+        Iter{
+            rdr: &mut self.rdr,
+            state: state,
+            str_record: csv::StringRecord::new(),
+        }
     }
 }
 
 pub struct Iter<'a, R: 'a> {
-    iter: csv::DeserializeRecordsIter<'a, R, RawEvent>
+    rdr: &'a mut csv::Reader<R>,
+    state: IterState,
+    str_record: csv::StringRecord,
+}
+
+enum IterState {
+    HeadersFailed(Box<Error>),
+    HeadersParsed(csv::StringRecord),
+    Done,
 }
 
 impl<'a, R : io::Read> Iterator for Iter<'a, R> {
     type Item = Result<Event, Box<Error>>;
     fn next(&mut self) -> Option<Self::Item> {
-        match self.iter.next() {
-            None => None,
-            Some(Err(e)) => Some(Err(Box::new(e))),
-            Some(Ok(raw_event)) => Some(raw_event.into_event()),
-        }
-    }
-}
-
-pub mod plotly {
-    extern crate futures;
-    extern crate hyper_tls;
-    extern crate tokio_core;
-
-    use std::str;
-    use std::error::Error;
-    use serde;
-    use super::hyper::{Client, Method, Request};
-    use super::hyper::header::{Headers, ContentLength, ContentType, Authorization, Basic};
-    use self::hyper_tls::HttpsConnector;
-    use self::tokio_core::reactor::Core;
-    use self::futures::{Future,Stream};
-
-    #[derive(Serialize)]
-    pub struct Grid<'a, X,Y> 
-        where X: 'a, Y: 'a
-    {
-        pub x: &'a [X],
-        pub y: &'a [Y],
-    }
-
-    fn json_grid<X,Y>(x: &Grid<X,Y>) -> Result<String, super::serde_json::Error>
-        where X : serde::Serialize, Y : serde::Serialize
-    {
-        super::serde_json::to_string(&x)
-    }
-
-    #[derive(Deserialize)]
-    struct CreateResponse {
-        file: CreateResponseFiles,
-    }
-
-    #[derive(Deserialize)]
-    struct CreateResponseFiles {
-        web_url: String,
-    }
-
-    header! { (PlotlyClientPlatform, "Plotly-Client-Platform") => [String] }
-
-    pub fn create_grid<X,Y>(g: &Grid<X,Y>) -> Result<String, Box<Error>> 
-        where X : serde::Serialize, Y : serde::Serialize
-    {
-        let json = json!({
-            "data": {
-                "cols": {
-                    "x": {"data": g.x, "order": 0},
-                    "y": {"data": g.y, "order": 1},
+        let s = std::mem::replace(&mut self.state, IterState::Done);
+        let (state, item) = match s {
+            IterState::HeadersFailed(e) => (IterState::Done, Some(Err(e))),
+            IterState::HeadersParsed(hdrs) => {
+                match self.rdr.read_record(&mut self.str_record) {
+                    Err(e) => (IterState::HeadersParsed(hdrs), Some(Err(e.into()))),
+                    Ok(false) => (IterState::Done, None),
+                    Ok(true) => {
+                        let res: Self::Item = self.str_record.deserialize::<RawEvent>(Some(&hdrs))
+                            .map_err(From::from)
+                            .and_then(|x| x.into_event());
+                        (IterState::HeadersParsed(hdrs), Some(res))
+                    }
                 }
-            }
-        }).to_string();
-        let mut core = Core::new()?;
-        let client = Client::configure()
-            .connector(HttpsConnector::new(4, &core.handle())?)
-            .build(&core.handle());
-        let uri = "https://api.plot.ly/v2/grids".parse()?;
-        let mut req = Request::new(Method::Post, uri);
-        req.headers_mut().set(ContentType::json());
-        req.headers_mut().set(ContentLength(json.len() as u64));
-        req.headers_mut().set(Authorization(Basic{
-            username: "ggriffiniii".to_owned(),
-            password: Some("KoZwuEUORXX5NWxgaw6k".to_owned()),
-        }));
-        req.headers_mut().set(PlotlyClientPlatform("Rust 0.1".to_owned()));
-        println!("{:?}", json);
-        req.set_body(json);
-        let f = client.request(req).and_then(|resp| {
-            resp.body().concat2().and_then(move |body: super::hyper::Chunk| {
-                println!("{:?}", str::from_utf8(&body).unwrap());
-                let v: CreateResponse = super::serde_json::from_slice(&body).unwrap();
-                Ok(v.file.web_url.to_owned())
-            })
-        });
-        core.run(f).map_err(From::from)
+            },
+            IterState::Done => (IterState::Done, None),
+        };
+        self.state = state;
+        item
     }
 }
