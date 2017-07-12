@@ -31,14 +31,24 @@ fn run() -> Result<(), Box<Error>> {
             }
         })
     }).filter_map(|v| v).collect();
+    let mut x = Vec::new();
+    let mut y = Vec::new();
     for sr in max_sleep_by_date.windows(5) {
         let (count, sum) = sr.iter().fold((0,0), |(c,s), sr| {
             (c + 1, s + sr.duration.num_milliseconds())
         });
         let mean = (sum as f64 / count as f64) as i64;
         let date = sr.iter().last().unwrap().end.unwrap().date();
-        println!("{}: {}", date, duration_str(chrono::Duration::milliseconds(mean)))
+        println!("{}: {}", date, duration_str(chrono::Duration::milliseconds(mean)));
+        x.push(format!("{}", date));
+        y.push(mean as f64 / 3600000 as f64);
     }
+    let grid = babystats::plotly::Grid{
+        x: x.as_slice(),
+        y: y.as_slice(),
+    };
+    let url = babystats::plotly::create_grid(&grid)?;
+    println!("{}", url);
     Ok(())
 }
 

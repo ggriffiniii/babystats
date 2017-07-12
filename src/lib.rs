@@ -6,12 +6,18 @@ extern crate lazy_static;
 extern crate serde;
 extern crate chrono;
 extern crate regex;
+#[macro_use]
+extern crate serde_json;
+#[macro_use]
+extern crate hyper;
 
 use chrono::TimeZone;
 use std::error::Error;
 use std::io;
 use chrono::offset::{Local,Utc};
 use regex::Regex;
+
+const ML_PER_OZ: f32 = 29.574;
 
 #[derive(Debug,Deserialize)]
 struct RawEvent {
@@ -80,7 +86,7 @@ impl RawEvent {
             },
             ounces: {
                 if self.extra.ends_with(" oz") {
-                    self.extra[..self.extra.len()-3].parse::<f32>()?
+                    self.extra[..self.extra.len()-3].parse::<f32>()? 
                 } else {
                     0.0
                 }
@@ -104,15 +110,32 @@ impl RawEvent {
     }
 
     fn to_pumping_event(&self) -> Result<PumpingEvent, Box<Error>> {
+        lazy_static! {
+            static ref L_RE: Regex = Regex::new(r"(\d+)\s*L").unwrap();
+            static ref R_RE: Regex = Regex::new(r"(\d+)\s*R").unwrap();
+        }
+        let left = L_RE.
+            captures(self.note.as_str()).
+            and_then(|x| {
+                x.get(1).unwrap().as_str().parse::<i32>().ok()
+            });
+        let right = R_RE.
+            captures(self.note.as_str()).
+            and_then(|x| {
+                x.get(1).unwrap().as_str().parse::<i32>().ok()
+            });
+        
         Ok(PumpingEvent{
             start: datetime_from_str(&self.start)?,
-            ounces: {
+            ml: {
                 if self.extra.ends_with(" oz") {
-                    self.extra[..self.extra.len()-3].parse::<f32>()?
+                    (self.extra[..self.extra.len()-3].parse::<f32>()? * ML_PER_OZ) as i32
                 } else {
-                    0.0
+                    0
                 }
             },
+            left_ml: left,
+            right_ml: right,
             note: self.note.clone(),
         })
     }
@@ -267,8 +290,16 @@ pub struct BreastEvent {
 #[derive(Debug,Clone)]
 pub struct PumpingEvent {
     pub start: chrono::DateTime<Local>,
-    pub ounces: f32,
+    pub ml: i32,
+    pub left_ml: Option<i32>,
+    pub right_ml: Option<i32>,
     pub note: String,
+}
+
+impl PumpingEvent {
+    pub fn oz(&self) -> f32 {
+        self.ml as f32 / ML_PER_OZ
+    }
 }
 
 #[derive(Debug,Clone)]
@@ -326,5 +357,82 @@ impl<'a, R : io::Read> Iterator for Iter<'a, R> {
             Some(Err(e)) => Some(Err(Box::new(e))),
             Some(Ok(raw_event)) => Some(raw_event.into_event()),
         }
+    }
+}
+
+pub mod plotly {
+    extern crate futures;
+    extern crate hyper_tls;
+    extern crate tokio_core;
+
+    use std::str;
+    use std::error::Error;
+    use serde;
+    use super::hyper::{Client, Method, Request};
+    use super::hyper::header::{Headers, ContentLength, ContentType, Authorization, Basic};
+    use self::hyper_tls::HttpsConnector;
+    use self::tokio_core::reactor::Core;
+    use self::futures::{Future,Stream};
+
+    #[derive(Serialize)]
+    pub struct Grid<'a, X,Y> 
+        where X: 'a, Y: 'a
+    {
+        pub x: &'a [X],
+        pub y: &'a [Y],
+    }
+
+    fn json_grid<X,Y>(x: &Grid<X,Y>) -> Result<String, super::serde_json::Error>
+        where X : serde::Serialize, Y : serde::Serialize
+    {
+        super::serde_json::to_string(&x)
+    }
+
+    #[derive(Deserialize)]
+    struct CreateResponse {
+        file: CreateResponseFiles,
+    }
+
+    #[derive(Deserialize)]
+    struct CreateResponseFiles {
+        web_url: String,
+    }
+
+    header! { (PlotlyClientPlatform, "Plotly-Client-Platform") => [String] }
+
+    pub fn create_grid<X,Y>(g: &Grid<X,Y>) -> Result<String, Box<Error>> 
+        where X : serde::Serialize, Y : serde::Serialize
+    {
+        let json = json!({
+            "data": {
+                "cols": {
+                    "x": {"data": g.x, "order": 0},
+                    "y": {"data": g.y, "order": 1},
+                }
+            }
+        }).to_string();
+        let mut core = Core::new()?;
+        let client = Client::configure()
+            .connector(HttpsConnector::new(4, &core.handle())?)
+            .build(&core.handle());
+        let uri = "https://api.plot.ly/v2/grids".parse()?;
+        let mut req = Request::new(Method::Post, uri);
+        req.headers_mut().set(ContentType::json());
+        req.headers_mut().set(ContentLength(json.len() as u64));
+        req.headers_mut().set(Authorization(Basic{
+            username: "ggriffiniii".to_owned(),
+            password: Some("KoZwuEUORXX5NWxgaw6k".to_owned()),
+        }));
+        req.headers_mut().set(PlotlyClientPlatform("Rust 0.1".to_owned()));
+        println!("{:?}", json);
+        req.set_body(json);
+        let f = client.request(req).and_then(|resp| {
+            resp.body().concat2().and_then(move |body: super::hyper::Chunk| {
+                println!("{:?}", str::from_utf8(&body).unwrap());
+                let v: CreateResponse = super::serde_json::from_slice(&body).unwrap();
+                Ok(v.file.web_url.to_owned())
+            })
+        });
+        core.run(f).map_err(From::from)
     }
 }
