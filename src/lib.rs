@@ -199,7 +199,18 @@ fn datetime_from_str<T: AsRef<str>>(s: T) -> Result<chrono::DateTime<Local>, Box
     Ok(Utc.datetime_from_str(s.as_ref(), "%0d/%0m/%Y %H:%M")?.with_timezone(&Local))
 }
 
-#[derive(Debug,Clone)]
+fn str_from_duration(d: &chrono::Duration) ->String {
+    let hours = d.num_hours();
+    let minutes = (*d - chrono::Duration::hours(hours)).num_minutes();
+    format!("{:02}:{:02}", hours, minutes)
+}
+
+fn duration_serialize<S>(d: &chrono::Duration, serializer: S) -> Result<S::Ok, S::Error>
+    where S: serde::Serializer {
+    serializer.serialize_str(str_from_duration(d).as_str())
+}
+
+#[derive(Debug,Clone,Serialize)]
 pub enum Event {
     Sleep(SleepEvent),
     Diaper(DiaperEvent),
@@ -224,15 +235,16 @@ impl Event {
     }
 }
 
-#[derive(Debug,Clone)]
+#[derive(Debug,Clone,Serialize)]
 pub struct SleepEvent {
     pub start: chrono::DateTime<Local>,
     pub end: Option<chrono::DateTime<Local>>,
+    #[serde(serialize_with = "duration_serialize")]
     pub duration: chrono::Duration,
     pub note: String,
 }
 
-#[derive(Debug,Clone)]
+#[derive(Debug,Clone,Serialize)]
 pub struct DiaperEvent {
     pub time: chrono::DateTime<Local>,
     pub pee: bool,
@@ -240,7 +252,7 @@ pub struct DiaperEvent {
     pub note: String,
 }
 
-#[derive(Debug,Clone)]
+#[derive(Debug,Clone,Serialize)]
 pub enum FeedingEvent {
     Bottle(BottleEvent),
     LeftBreast(BreastEvent),
@@ -257,14 +269,14 @@ impl FeedingEvent {
     }
 }
 
-#[derive(Debug,Clone)]
+#[derive(Debug,Clone,Serialize)]
 pub enum Milk {
     BreastMilk,
     Formula,
     Unknown,
 }
 
-#[derive(Debug,Clone)]
+#[derive(Debug,Clone,Serialize)]
 pub struct BottleEvent {
     pub time: chrono::DateTime<Local>,
     pub milk: Milk,
@@ -272,15 +284,16 @@ pub struct BottleEvent {
     pub note: String,
 }
 
-#[derive(Debug,Clone)]
+#[derive(Debug,Clone,Serialize)]
 pub struct BreastEvent {
     pub start: chrono::DateTime<Local>,
     pub end: Option<chrono::DateTime<Local>>,
+    #[serde(serialize_with = "duration_serialize")]
     pub duration: chrono::Duration,
     pub note: String,
 }
 
-#[derive(Debug,Clone)]
+#[derive(Debug,Clone,Serialize)]
 pub struct PumpingEvent {
     pub start: chrono::DateTime<Local>,
     pub ml: i32,
@@ -295,15 +308,16 @@ impl PumpingEvent {
     }
 }
 
-#[derive(Debug,Clone)]
+#[derive(Debug,Clone,Serialize)]
 pub struct TummyTimeEvent {
     pub start: chrono::DateTime<Local>,
     pub end: Option<chrono::DateTime<Local>>,
+    #[serde(serialize_with = "duration_serialize")]
     pub duration: chrono::Duration,
     pub note: String,
 }
 
-#[derive(Debug,Clone)]
+#[derive(Debug,Clone,Serialize)]
 pub struct MeasureEvent {
     pub time: chrono::DateTime<Local>,
     pub weight: Option<f32>,
@@ -312,7 +326,7 @@ pub struct MeasureEvent {
     pub note: String,
 }
 
-#[derive(Debug,Clone)]
+#[derive(Debug,Clone,Serialize)]
 pub struct NoteEvent {
     pub time: chrono::DateTime<Local>,
     pub note: String,
