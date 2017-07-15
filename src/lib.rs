@@ -74,7 +74,7 @@ impl<'a> RawEvent<'a> {
             time: datetime_from_str(&self.start)?,
             milk: match self.extra2 {
                 "Mom's milk" => Milk::BreastMilk,
-                "Formula" => Milk::Formula,
+                "Formula milk" => Milk::Formula,
                 _ => Milk::Unknown,
             },
             ounces: {
