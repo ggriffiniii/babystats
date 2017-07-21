@@ -12,7 +12,7 @@ use std::error::Error;
 use std::io;
 use std::fs::File;
 use std::path::Path;
-use chrono::offset::{Local,Utc};
+use chrono::offset::{Local};
 use regex::Regex;
 
 const ML_PER_OZ: f32 = 29.574;
@@ -196,7 +196,7 @@ impl<'a> RawEvent<'a> {
 }
 
 fn datetime_from_str<T: AsRef<str>>(s: T) -> Result<chrono::DateTime<Local>, Box<Error>> {
-    Ok(Utc.datetime_from_str(s.as_ref(), "%0d/%0m/%Y %H:%M")?.with_timezone(&Local))
+    Ok(Local.datetime_from_str(s.as_ref(), "%0d/%0m/%Y %H:%M")?)
 }
 
 fn str_from_duration(d: &chrono::Duration) ->String {
