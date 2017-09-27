@@ -40,6 +40,7 @@ impl<'a> RawEvent<'a> {
             "Right breast" => Ok(Event::Feeding(FeedingEvent::RightBreast(self.to_breast_event()?))),
             "Pumping" => Ok(Event::Pumping(self.to_pumping_event()?)),
             "Vaccination" => Ok(Event::TummyTime(self.to_tummy_time_event()?)),
+            "Meal" => Ok(Event::Meal(self.to_meal_event()?)),
             "Measure" => Ok(Event::Measure(self.to_measure_event()?)),
             "Note" => Ok(Event::Note(self.to_note_event()?)),
             _ => Err(From::from(format!("unknown type: {}", self.typ))),
@@ -147,6 +148,13 @@ impl<'a> RawEvent<'a> {
         })
     }
 
+    fn to_meal_event(&self) -> Result<MealEvent, Box<Error>> {
+        Ok(MealEvent{
+            time: datetime_from_str(&self.start)?,
+            note: self.note.to_string(),
+        })
+    }
+
     fn to_measure_event(&self) -> Result<MeasureEvent, Box<Error>> {
         lazy_static! {
             static ref WEIGHT_RE: Regex = Regex::new(r"Weight: (\d+(?:\.\d+)?) lb").unwrap();
@@ -217,6 +225,7 @@ pub enum Event {
     Feeding(FeedingEvent),
     Pumping(PumpingEvent),
     TummyTime(TummyTimeEvent),
+    Meal(MealEvent),
     Measure(MeasureEvent),
     Note(NoteEvent),
 }
@@ -229,6 +238,7 @@ impl Event {
             &Event::Feeding(ref r) => r.time(),
             &Event::Pumping(ref r) => r.start,
             &Event::TummyTime(ref r) => r.start,
+            &Event::Meal(ref r) => r.time,
             &Event::Measure(ref r) => r.time,
             &Event::Note(ref r) => r.time,
         }
@@ -314,6 +324,12 @@ pub struct TummyTimeEvent {
     pub end: Option<chrono::DateTime<Local>>,
     #[serde(serialize_with = "duration_serialize")]
     pub duration: chrono::Duration,
+    pub note: String,
+}
+
+#[derive(Debug,Clone,Serialize)]
+pub struct MealEvent {
+    pub time: chrono::DateTime<Local>,
     pub note: String,
 }
 
